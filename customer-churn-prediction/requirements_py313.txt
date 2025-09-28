@@ -1,0 +1,29 @@
+# Python 3.13 Compatible Requirements
+# Use this file if you encounter compilation issues with Python 3.13
+
+# Core data science libraries with Python 3.13 compatibility
+
+# Machine learning with Python 3.13 support
+
+
+# Visualization libraries
+seaborn>=0.12.0,<0.14.0
+plotly>=5.15.0,<5.25.0
+
+# Model interpretability
+
+
+# Utilities
+
+pyarrow>=13.0.0,<18.0.0
+
+# Web framework
+
+pandas==2.2.*
+numpy==1.26.*
+scikit-learn==1.4.*
+xgboost==2.0.*
+shap==0.44.*
+matplotlib==3.8.*
+streamlit==1.36.*
+joblib==1.4.*
