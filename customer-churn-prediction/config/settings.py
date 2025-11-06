@@ -12,13 +12,18 @@ class Config:
 
     def __init__(self):
         # Project paths
-        self.project_root = Path(__file__).parent.parent.parent
+        self.project_root = Path(__file__).parent.parent  # Points to customer-churn-prediction
         self.data_dir = self.project_root / "data"
         self.raw_data_dir = self.data_dir / "raw"
         self.processed_data_dir = self.data_dir / "processed"
         self.external_data_dir = self.data_dir / "external"
         self.models_dir = self.project_root / "models"
         self.notebooks_dir = self.project_root / "notebooks"
+        
+        # Ensure directories exist
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.processed_data_dir.mkdir(parents=True, exist_ok=True)
+        self.models_dir.mkdir(parents=True, exist_ok=True)
 
         # Data configuration
         self.data_url = "https://raw.githubusercontent.com/IBM/telco-customer-churn-on-icp4d/master/data/Telco-Customer-Churn.csv"

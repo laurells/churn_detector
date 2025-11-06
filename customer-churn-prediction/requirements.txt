@@ -1,9 +1,18 @@
-pandas==2.2.*
-numpy==1.26.*
-scikit-learn==1.4.*
-xgboost==2.0.*
-shap==0.44.*
-matplotlib==3.8.*
-streamlit==1.36.*
-joblib==1.4.*
-pyarrow==17.0.0
+# Alternative requirements for Python 3.13 compatibility
+# Use this file if you encounter compilation issues with the main requirements.txt
+
+# Core dependencies with Python 3.13 compatible versions
+numpy>=1.24.0,<2.0.0
+pandas>=2.0.0,<2.3.0
+scikit-learn>=1.3.0,<1.6.0
+streamlit>=1.28.0,<1.40.0
+
+# Other dependencies (these should work with Python 3.13)
+matplotlib>=3.7.0,<3.10.0
+seaborn>=0.12.0,<0.14.0
+plotly>=5.15.0,<5.25.0
+joblib>=1.3.0,<1.5.0
+
+# ML and explainability libraries
+xgboost>=1.7.0,<2.2.0
+shap>=0.42.0,<0.47.0
