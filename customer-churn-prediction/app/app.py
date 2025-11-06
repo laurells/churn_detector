@@ -169,6 +169,10 @@ class ChurnPredictionApp:
             st.session_state.models_loaded = False
         if 'prediction_made' not in st.session_state:
             st.session_state.prediction_made = False
+        if 'global_importance_computed' not in st.session_state:
+            st.session_state.global_importance_computed = False
+        if 'shap_explainers_initialized' not in st.session_state:
+            st.session_state.shap_explainers_initialized = set()  # Track which models have explainers
 
     def load_all_resources(self):
         """Load all required models, data, and analyzers"""
@@ -227,20 +231,20 @@ class ChurnPredictionApp:
             # Load data for analysis
             self._load_customer_data()
             
-            # Initialize interpreter with loaded models
+            # Initialize interpreter with loaded models (lazy - don't compute SHAP yet)
             if self.models and hasattr(self, 'X_train'):
                 self.interpreter = ModelInterpreter(
                     self.models, 
                     self.X_train, 
                     self.X_test if hasattr(self, 'X_test') else self.X_train
                 )
-                # Compute global importance once
-                self.interpreter.get_global_importance()
+                # Don't compute global importance here - it's slow! Compute on-demand instead
+                # self.interpreter.get_global_importance()  # Removed - compute lazily
             else:
                 self.interpreter = None
 
             st.session_state.models_loaded = True
-            st.sidebar.success(f"✅ Loaded {len(self.predictors)} model(s) successfully")
+            st.sidebar.success(f"Loaded {len(self.predictors)} model(s) successfully")
 
         except Exception as e:
             st.error(f"Error loading resources: {str(e)}")
@@ -619,8 +623,24 @@ class ChurnPredictionApp:
                 customer_df = pd.DataFrame([input_dict])
                 customer_processed = predictor._prepare_features(customer_df)
                 
+                # Get local explanation (with progress indicator for tree models)
+                if model_name in ['random_forest', 'xgboost']:
+                    # For tree models, check if explainer exists, if not initialize it
+                    if model_name not in self.interpreter.explainers:
+                        if model_name not in st.session_state.shap_explainers_initialized:
+                            with st.spinner(f"Initializing SHAP explainer for {model_name} (first time only, ~10-30 seconds)..."):
+                                # Initialize explainer with small sample for faster computation
+                                self.interpreter.compute_shap_explanations(model_name, n_samples=50)
+                                st.session_state.shap_explainers_initialized.add(model_name)
+                        else:
+                            # Explainer should exist but check anyway
+                            if model_name not in self.interpreter.explainers:
+                                with st.spinner(f"Re-initializing SHAP explainer for {model_name}..."):
+                                    self.interpreter.compute_shap_explanations(model_name, n_samples=50)
+                
                 # Get local explanation
-                explanation = self.interpreter.get_local_explanation(model_name, customer_processed)
+                with st.spinner("Computing explanation..."):
+                    explanation = self.interpreter.get_local_explanation(model_name, customer_processed)
                 
                 # Extract top features
                 if model_name in ['random_forest', 'xgboost']:
@@ -946,6 +966,22 @@ class ChurnPredictionApp:
         # Global feature importance
         st.markdown("### Global Feature Importance")
         
+        # Lazy load global importance (compute on-demand with caching)
+        if self.interpreter:
+            # Check if already computed in session state
+            if 'global_importance_computed' not in st.session_state:
+                st.session_state.global_importance_computed = False
+            
+            if not st.session_state.global_importance_computed:
+                with st.spinner("Computing feature importance (this may take a minute for SHAP)..."):
+                    try:
+                        self.interpreter.get_global_importance(compute_shap=True)
+                        st.session_state.global_importance_computed = True
+                        st.success("Feature importance computed successfully!")
+                    except Exception as e:
+                        st.error(f"Error computing feature importance: {str(e)}")
+                        st.session_state.global_importance_computed = False
+        
         if self.interpreter and self.interpreter.global_importance:
             importance_model = st.selectbox(
                 "Select model for feature importance",
@@ -1045,7 +1081,11 @@ class ChurnPredictionApp:
                 st.metric("Total CLV", f"${total_clv:,.0f}")
             
             with col4:
-                overall_churn = (customer_data['Churn'] == 1).mean()
+                # Handle both string ('Yes'/'No') and numeric (1/0) churn values
+                if customer_data['Churn'].dtype == 'object' or customer_data['Churn'].dtype.name == 'category':
+                    overall_churn = (customer_data['Churn'] == 'Yes').mean()
+                else:
+                    overall_churn = (customer_data['Churn'] == 1).mean()
                 st.metric("Overall Churn Rate", f"{overall_churn:.1%}")
             
             # CLV Distribution
@@ -1195,8 +1235,8 @@ class ChurnPredictionApp:
             
             The analysis reveals clear segmentation in customer value and churn behavior. 
             The **Premium segment** (highest 25% CLV) represents our most valuable customers 
-            with an average CLV of **${premium_avg_clv:,.0f}**, yet faces a **{premium_churn:.1f}% churn rate**. 
-            This translates to approximately **${premium_at_risk:,.0f} in annual revenue at risk**.
+            with an average CLV of ${premium_avg_clv:,.0f}, yet faces a {premium_churn:.1f}% churn rate. 
+            This translates to approximately ${premium_at_risk:,.0f} in annual revenue at risk.
             
             **Why prioritize Premium customers:**
             - Highest lifetime value (${premium_avg_clv:,.0f} vs company average ${customer_data['clv'].mean():,.0f})
