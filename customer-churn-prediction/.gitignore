@@ -17,7 +17,7 @@ data/raw/*.csv
 data/external/
 
 # Model files (if you want to exclude them from version control)
-models/*.pkl
+# models/*.pkl  # Commented out - committing models for Streamlit Cloud deployment
 
 # OS generated files
 .DS_Store
