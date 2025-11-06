@@ -182,11 +182,9 @@ class ChurnPredictionApp:
             self.models = {}
             model_names = ['xgboost', 'random_forest', 'logistic_regression']
             
-            # Look for models in the new location first, then fall back to the old location
-            project_root = Path(__file__).parent.parent  # Go up to customer-churn-prediction
+            # Use the same models directory as defined in config
+            project_root = Path(__file__).parent  # Stay in customer-churn-prediction directory
             models_dir = project_root / "models"
-            if not models_dir.exists():
-                models_dir = project_root / "models"  # Fallback to old location
             self.logger.info(f"Using models directory: {models_dir}")
             
             for model_name in model_names:
