@@ -63,17 +63,20 @@ COLORS = {
 
 
 @st.cache_resource(show_spinner="Initializing prediction models...")
-def load_and_initialize_interpreter(models_dict, X_train_df, X_test_df):
+def load_and_initialize_interpreter(_models_dict, _X_train_df, _X_test_df):
     """
     Cache the interpreter initialization to avoid recomputing SHAP explainers.
     This persists across Streamlit reruns for faster performance.
+
+    Note: Leading underscores tell Streamlit to skip hashing these arguments,
+    which prevents issues with unhashable model objects.
     """
     logger = logging.getLogger(__name__)
-    interpreter = ModelInterpreter(models_dict, X_train_df, X_test_df)
+    interpreter = ModelInterpreter(_models_dict, _X_train_df, _X_test_df)
 
     # Pre-compute SHAP explainers for tree models
     for model_name in ['xgboost', 'random_forest']:
-        if model_name in models_dict:
+        if model_name in _models_dict:
             try:
                 logger.info(f"Pre-computing SHAP explainer for {model_name}...")
                 interpreter.compute_shap_explanations(model_name, n_samples=50)
