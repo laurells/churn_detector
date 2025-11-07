@@ -144,11 +144,13 @@ class ModelTrainer:
             }
         elif model_type == 'random_forest':
             return {
-                'classifier__n_estimators': [100, 200],
-                'classifier__max_depth': [5, 10, 15, None],
-                'classifier__min_samples_leaf': [1, 2, 4],
-                'classifier__max_features': ['sqrt', 'log2'],
-                'classifier__bootstrap': [True, False]
+                'classifier__n_estimators': [300, 400, 500],  # Focus on more trees
+                'classifier__max_depth': [15, 20, 25, 30, None],  # Even deeper - key parameter
+                'classifier__min_samples_split': [2, 4, 6],
+                'classifier__min_samples_leaf': [1, 2, 3, 4, 5],  # Expanded - key parameter
+                'classifier__max_features': ['sqrt', 'log2', 0.25, 0.33],
+                'classifier__bootstrap': [True],
+                'classifier__min_impurity_decrease': [0.0, 0.001, 0.01]  # Added for pruning
             }
         elif model_type == 'xgboost':
             return {
@@ -178,10 +180,14 @@ class ModelTrainer:
             random_state=config.model_settings['random_state']
         )
 
+        # Adjust n_iter based on model type - more iterations for complex models
+        # RF has large search space due to key parameters: max_depth, min_samples_leaf
+        n_iter = 75 if model_name == 'random_forest' else (50 if model_name == 'xgboost' else 30)
+
         return RandomizedSearchCV(
             estimator=pipeline,
             param_distributions=param_grid,
-            n_iter=30,
+            n_iter=n_iter,
             cv=cv,
             scoring=scoring,
             refit='roc_auc',

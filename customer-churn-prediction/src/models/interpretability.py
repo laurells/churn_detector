@@ -122,34 +122,27 @@ class ModelInterpreter:
         """
         Preprocess data through pipeline up to (but not including) classifier.
         This ensures SHAP sees the same data the model sees.
+        Returns a clean 2D numpy array suitable for SHAP.
         """
         if hasattr(model_pipeline, 'named_steps'):
             # Apply all preprocessing steps except final classifier
             X_processed = X.copy()
-            output_feature_names = None
             for step_name, transformer in model_pipeline.named_steps.items():
                 if step_name != 'classifier':
                     # Only apply steps that expose a transform method (skip SMOTE, etc.)
                     if hasattr(transformer, 'transform'):
                         X_processed = transformer.transform(X_processed)
-                        # Capture transformed feature names if available
-                        try:
-                            if hasattr(transformer, 'get_feature_names_out'):
-                                output_feature_names = list(transformer.get_feature_names_out())
-                        except Exception:
-                            pass
                     else:
                         self.logger.debug(f"Skipping step without transform: {step_name} ({type(transformer).__name__})")
-            # Ensure dense array
+
+            # Ensure we return a clean numpy array, not a DataFrame
             if sp.issparse(X_processed):
                 X_processed = X_processed.toarray()
-            # If we have valid feature names matching shape, return DataFrame for plotting-friendly usage
-            if output_feature_names is not None:
-                try:
-                    if isinstance(X_processed, np.ndarray) and X_processed.ndim == 2 and X_processed.shape[1] == len(output_feature_names):
-                        return pd.DataFrame(X_processed, columns=output_feature_names)
-                except Exception:
-                    pass
+
+            # Convert DataFrame to numpy if needed
+            if isinstance(X_processed, pd.DataFrame):
+                X_processed = X_processed.values
+
             return X_processed
         
         # If model has a preprocess method, use it
@@ -167,47 +160,65 @@ class ModelInterpreter:
         """Ensure input is a dense 2D numeric numpy array.
         Handles pandas, scipy.sparse, and object arrays of arrays.
         """
-        # Sparse
+        # Handle sparse matrices
         if sp.issparse(X):
             X = X.toarray()
-        # Pandas DataFrame
+
+        # Handle Pandas DataFrame - convert to numpy
         if isinstance(X, pd.DataFrame):
             X = X.values
-        # Pandas Series where each element is an array/list
+
+        # Handle Pandas Series
         if isinstance(X, pd.Series):
             values = X.to_numpy()
             if len(values) > 0 and isinstance(values[0], (np.ndarray, list)):
                 X = np.vstack([np.asarray(v) for v in values])
             else:
                 X = values.reshape(-1, 1)
-        # Numpy array
-        X = np.asarray(X, dtype=object)
-        # Object array of arrays (1D): stack rows
-        if X.ndim == 1 and X.dtype == object and len(X) > 0 and isinstance(X[0], (np.ndarray, list)):
-            X = np.vstack([np.asarray(v) for v in X])
-        # If still object dtype, try column-wise extraction
-        if X.dtype == object:
+
+        # If already a numpy array, try to convert to float directly
+        if isinstance(X, np.ndarray):
+            # If it's already numeric and 2D, return it
+            if X.ndim == 2 and X.dtype.kind in ['i', 'u', 'f']:  # int, uint, or float
+                return X.astype(float)
+
+            # If it's 1D, reshape to 2D
+            if X.ndim == 1:
+                X = X.reshape(-1, 1)
+
+            # Try direct float conversion
             try:
-                X = np.asarray(X, dtype=float)
-            except Exception:
-                cols = []
-                X_2d = X if X.ndim == 2 else X.reshape(-1, 1)
-                for j in range(X_2d.shape[1]):
-                    col = X_2d[:, j]
-                    if isinstance(col[0], (np.ndarray, list)):
-                        col_arr = np.vstack([np.asarray(v).reshape(-1) for v in col])
-                    else:
-                        col_arr = np.asarray(col).reshape(-1, 1)
-                    cols.append(col_arr)
-                X = np.concatenate(cols, axis=1)
-        # Final cast to float if possible
-        try:
-            X = np.asarray(X, dtype=float)
-        except Exception:
-            pass
+                return np.asarray(X, dtype=float)
+            except (ValueError, TypeError):
+                # If that fails, handle object arrays
+                if X.dtype == object:
+                    # Check if it's an array of arrays
+                    if len(X) > 0 and isinstance(X.flat[0], (np.ndarray, list)):
+                        X = np.vstack([np.asarray(v).flatten() for v in X])
+                    # Try converting to float
+                    try:
+                        return np.asarray(X, dtype=float)
+                    except (ValueError, TypeError):
+                        # Last resort: column-by-column conversion
+                        if X.ndim == 2:
+                            cols = []
+                            for j in range(X.shape[1]):
+                                col = X[:, j]
+                                try:
+                                    cols.append(np.asarray(col, dtype=float).reshape(-1, 1))
+                                except (ValueError, TypeError):
+                                    # Skip columns that can't be converted
+                                    pass
+                            if cols:
+                                return np.concatenate(cols, axis=1)
+
+        # Fallback: try to convert whatever we have to float
+        X = np.asarray(X, dtype=float)
+
         # Ensure 2D
         if X.ndim == 1:
             X = X.reshape(-1, 1)
+
         return X
 
     def _sample_data_for_shap(self, n_samples: int = 100) -> pd.DataFrame:
@@ -344,21 +355,26 @@ class ModelInterpreter:
             # Preprocess the data if needed and convert to dense 2D numeric array
             try:
                 X_sample_processed = self._preprocess_data(model, X_sample)
+                self.logger.debug(f"Preprocessed data type: {type(X_sample_processed)}, shape: {getattr(X_sample_processed, 'shape', 'N/A')}")
+
                 # Robust conversion to dense 2D numeric array
                 X_tree_input = self._to_2d_numeric_array(X_sample_processed)
+                self.logger.info(f"Converted to numeric array - shape: {X_tree_input.shape}, dtype: {X_tree_input.dtype}")
+
             except Exception as preprocess_error:
-                self.logger.error(f"Error preprocessing data for {model_name}: {str(preprocess_error)}")
+                self.logger.error(f"Error preprocessing data for {model_name}: {str(preprocess_error)}", exc_info=True)
                 return None, None
         
             # Handle different model types
             try:
                 self.logger.info(f"Trying TreeExplainer for {model_name}")
+                self.logger.debug(f"Input to TreeExplainer - shape: {X_tree_input.shape}, dtype: {X_tree_input.dtype}")
+
                 explainer = shap.TreeExplainer(classifier)
+                self.logger.debug("TreeExplainer created successfully")
+
                 shap_values = explainer.shap_values(X_tree_input)
-                try:
-                    self.logger.debug(f"TreeExplainer SHAP shapes: X={X_tree_input.shape}, shap={np.array(shap_values).shape}")
-                except Exception:
-                    pass
+                self.logger.debug(f"TreeExplainer SHAP shapes: X={X_tree_input.shape}, shap={np.array(shap_values).shape}")
             
                 # If it's a list (multi-class), take the first class
                 if isinstance(shap_values, list):
