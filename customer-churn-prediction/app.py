@@ -61,6 +61,28 @@ COLORS = {
     'text': '#2c3e50'          # Dark blue-gray
 }
 
+
+@st.cache_resource(show_spinner="Initializing prediction models...")
+def load_and_initialize_interpreter(models_dict, X_train_df, X_test_df):
+    """
+    Cache the interpreter initialization to avoid recomputing SHAP explainers.
+    This persists across Streamlit reruns for faster performance.
+    """
+    logger = logging.getLogger(__name__)
+    interpreter = ModelInterpreter(models_dict, X_train_df, X_test_df)
+
+    # Pre-compute SHAP explainers for tree models
+    for model_name in ['xgboost', 'random_forest']:
+        if model_name in models_dict:
+            try:
+                logger.info(f"Pre-computing SHAP explainer for {model_name}...")
+                interpreter.compute_shap_explanations(model_name, n_samples=50)
+                logger.info(f"✓ SHAP explainer ready for {model_name}")
+            except Exception as e:
+                logger.warning(f"Could not pre-compute SHAP for {model_name}: {e}")
+
+    return interpreter
+
 # Page configuration
 st.set_page_config(
     page_title="Customer Churn Prediction Platform",
@@ -229,15 +251,19 @@ class ChurnPredictionApp:
             # Load data for analysis
             self._load_customer_data()
             
-            # Initialize interpreter with loaded models (lazy - don't compute SHAP yet)
+            # Initialize interpreter with loaded models (using cached function for performance)
             if self.models and hasattr(self, 'X_train'):
-                self.interpreter = ModelInterpreter(
-                    self.models, 
-                    self.X_train, 
-                    self.X_test if hasattr(self, 'X_test') else self.X_train
-                )
-                # Don't compute global importance here - it's slow! Compute on-demand instead
-                # self.interpreter.get_global_importance()  # Removed - compute lazily
+                try:
+                    # Use cached interpreter to avoid recomputing SHAP explainers on every reload
+                    self.interpreter = load_and_initialize_interpreter(
+                        self.models,
+                        self.X_train,
+                        self.X_test if hasattr(self, 'X_test') else self.X_train
+                    )
+                    self.logger.info("Interpreter loaded (using cache if available)")
+                except Exception as e:
+                    self.logger.error(f"Failed to initialize interpreter: {e}")
+                    self.interpreter = None
             else:
                 self.interpreter = None
 
@@ -621,24 +647,9 @@ class ChurnPredictionApp:
                 customer_df = pd.DataFrame([input_dict])
                 customer_processed = predictor._prepare_features(customer_df)
                 
-                # Get local explanation (with progress indicator for tree models)
-                if model_name in ['random_forest', 'xgboost']:
-                    # For tree models, check if explainer exists, if not initialize it
-                    if model_name not in self.interpreter.explainers:
-                        if model_name not in st.session_state.shap_explainers_initialized:
-                            with st.spinner(f"Initializing SHAP explainer for {model_name} (first time only, ~10-30 seconds)..."):
-                                # Initialize explainer with small sample for faster computation
-                                self.interpreter.compute_shap_explanations(model_name, n_samples=50)
-                                st.session_state.shap_explainers_initialized.add(model_name)
-                        else:
-                            # Explainer should exist but check anyway
-                            if model_name not in self.interpreter.explainers:
-                                with st.spinner(f"Re-initializing SHAP explainer for {model_name}..."):
-                                    self.interpreter.compute_shap_explanations(model_name, n_samples=50)
-                
+                # Get local explanation (SHAP explainer should already be pre-computed from startup)
                 # Get local explanation
-                with st.spinner("Computing explanation..."):
-                    explanation = self.interpreter.get_local_explanation(model_name, customer_processed)
+                explanation = self.interpreter.get_local_explanation(model_name, customer_processed)
                 
                 # Extract top features
                 if model_name in ['random_forest', 'xgboost']:
